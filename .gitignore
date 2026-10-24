@@ -1,0 +1,14 @@
+/bin/
+/dist/
+/profiles/
+*.test.exe
+*.prof
+coverage.out
+# Local verification fixtures are intentionally excluded from source commits.
+**/*_test.go
+*.key
+*.pem
+*.private
+.DS_Store
+/docs/
+/scripts/

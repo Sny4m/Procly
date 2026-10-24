@@ -1,0 +1,38 @@
+name: Signed Windows release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  verify:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test -race -count=1 -timeout=3m ./...
+      - run: go vet ./...
+  release:
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Verify official source and signing key
+        env:
+          PROCLY_SIGNING_KEY: ${{ secrets.PROCLY_SIGNING_KEY }}
+        run: go run ./cmd/release-check
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          version: '~> v2'
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROCLY_SIGNING_KEY: ${{ secrets.PROCLY_SIGNING_KEY }}

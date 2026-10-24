@@ -1,0 +1,30 @@
+version: 2
+project_name: procly
+builds:
+  - id: procly
+    main: ./cmd/procly
+    binary: procly
+    env: [CGO_ENABLED=0]
+    goos: [windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+archives:
+  - formats: [zip]
+    name_template: 'procly_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
+    files: [README.md, LICENSE]
+checksum:
+  name_template: checksums.txt
+signs:
+  - cmd: go
+    args: [run, ./cmd/sign-release, '${artifact}']
+    signature: '${artifact}.sig'
+    artifacts: checksum
+release:
+  draft: true
+  prerelease: auto
+changelog:
+  sort: asc
+  filters:
+    exclude: ['^test:', '^docs:', '^chore:']
