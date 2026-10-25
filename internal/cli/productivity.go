@@ -4,16 +4,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
+	"text/tabwriter"
+	"time"
+
 	"github.com/procly/procly/internal/config"
 	"github.com/procly/procly/internal/session"
 	"github.com/procly/procly/internal/storage"
 	"github.com/procly/procly/internal/tui"
 	"github.com/spf13/cobra"
-	"io"
-	"os"
-	"strings"
-	"text/tabwriter"
-	"time"
 )
 
 func remoteCommands(store storeFunc) []*cobra.Command {
@@ -76,8 +76,8 @@ func followLogs(c *cobra.Command, s *storage.Store, name, stream string) error {
 	}
 }
 func groupCommand(store storeFunc) *cobra.Command {
-	root := &cobra.Command{Use: "group", Short: "Save and run command workspaces"}
-	root.AddCommand(&cobra.Command{Use: "create NAME", Args: cobra.ExactArgs(1), Short: "Create a workspace", RunE: func(c *cobra.Command, args []string) error {
+	root := &cobra.Command{Use: "group", Short: "Save and run command groups"}
+	root.AddCommand(&cobra.Command{Use: "create NAME [COMMAND...]", Args: cobra.MinimumNArgs(1), Short: "Create a group", RunE: func(c *cobra.Command, args []string) error {
 		s, e := store()
 		if e != nil {
 			return e
@@ -86,11 +86,11 @@ func groupCommand(store storeFunc) *cobra.Command {
 			if _, ok := d.Groups[args[0]]; ok {
 				return errors.New("group already exists")
 			}
-			d.Groups[args[0]] = []string{}
+			d.Groups[args[0]] = append([]string{}, args[1:]...)
 			return nil
 		})
 	}})
-	root.AddCommand(&cobra.Command{Use: "add GROUP COMMAND...", Args: cobra.MinimumNArgs(2), Short: "Add saved commands to a workspace", RunE: func(c *cobra.Command, args []string) error {
+	root.AddCommand(&cobra.Command{Use: "add GROUP COMMAND...", Args: cobra.MinimumNArgs(2), Short: "Add saved commands to a group", RunE: func(c *cobra.Command, args []string) error {
 		s, e := store()
 		if e != nil {
 			return e
@@ -104,7 +104,7 @@ func groupCommand(store storeFunc) *cobra.Command {
 			return nil
 		})
 	}})
-	root.AddCommand(&cobra.Command{Use: "ls", Aliases: []string{"list"}, Args: cobra.NoArgs, Short: "List workspaces", RunE: func(c *cobra.Command, _ []string) error {
+	root.AddCommand(&cobra.Command{Use: "list", Aliases: []string{"ls"}, Args: cobra.NoArgs, Short: "List groups", RunE: func(c *cobra.Command, _ []string) error {
 		s, e := store()
 		if e != nil {
 			return e
@@ -115,7 +115,7 @@ func groupCommand(store storeFunc) *cobra.Command {
 		}
 		return json.NewEncoder(c.OutOrStdout()).Encode(d.Groups)
 	}})
-	root.AddCommand(&cobra.Command{Use: "rm NAME", Args: cobra.ExactArgs(1), Short: "Remove a group definition", RunE: func(c *cobra.Command, args []string) error {
+	root.AddCommand(&cobra.Command{Use: "remove NAME", Aliases: []string{"rm"}, Args: cobra.ExactArgs(1), Short: "Remove a group", RunE: func(c *cobra.Command, args []string) error {
 		s, e := store()
 		if e != nil {
 			return e
@@ -130,7 +130,7 @@ func groupCommand(store storeFunc) *cobra.Command {
 	}})
 	for _, action := range []string{"run", "stop"} {
 		action := action
-		root.AddCommand(&cobra.Command{Use: action + " NAME", Args: cobra.ExactArgs(1), Short: action + " a workspace in the active session", RunE: func(c *cobra.Command, args []string) error {
+		root.AddCommand(&cobra.Command{Use: action + " NAME", Args: cobra.ExactArgs(1), Short: action + " a group in the active session", RunE: func(c *cobra.Command, args []string) error {
 			s, e := store()
 			if e != nil {
 				return e
@@ -169,25 +169,9 @@ func scheduleCommand(store storeFunc) *cobra.Command {
 		if e != nil {
 			return e
 		}
-		sc := config.Schedule{Name: args[0], Alias: alias, Enabled: true}
-		if at != "" {
-			sc.At, e = time.Parse(time.RFC3339, at)
-			if e != nil {
-				sc.At, e = time.ParseInLocation("2006-01-02 15:04", at, time.Local)
-			}
-			if e != nil {
-				return fmt.Errorf("use RFC3339 with timezone or local YYYY-MM-DD HH:MM: %w", e)
-			}
-			if !sc.At.After(time.Now()) {
-				return errors.New("scheduled time must be in the future")
-			}
-		}
-		if every != "" {
-			sc.Every, e = time.ParseDuration(every)
-			if e != nil {
-				return e
-			}
-			sc.Next = time.Now().Add(sc.Every)
+		sc, e := config.NewSchedule(args[0], alias, at, every, time.Now())
+		if e != nil {
+			return e
 		}
 		e = s.Update(func(d *config.Document) error {
 			if _, ok := d.Schedules[sc.Name]; ok {
@@ -204,21 +188,28 @@ func scheduleCommand(store storeFunc) *cobra.Command {
 	add.Flags().StringVar(&at, "at", "", "One-time local date or RFC3339 timestamp")
 	add.Flags().StringVar(&every, "every", "", "Interval, for example 30m")
 	add.Flags().StringVar(&alias, "run", "", "Saved command name")
+	add.MarkFlagsMutuallyExclusive("at", "every")
+	add.MarkFlagsOneRequired("at", "every")
+	_ = add.MarkFlagRequired("run")
 	root.AddCommand(add)
-	for _, action := range []string{"ls", "cancel", "enable", "disable", "history"} {
+	for _, action := range []string{"list", "cancel", "enable", "disable", "history"} {
 		action := action
 		args := cobra.ExactArgs(1)
 		use := action + " NAME"
-		if action == "ls" {
+		if action == "list" {
 			args = cobra.NoArgs
 			use = action
 		}
-		root.AddCommand(&cobra.Command{Use: use, Args: args, Short: action + " schedule definitions", RunE: func(c *cobra.Command, args []string) error {
+		aliases := []string{}
+		if action == "list" {
+			aliases = []string{"ls"}
+		}
+		root.AddCommand(&cobra.Command{Use: use, Aliases: aliases, Args: args, Short: map[string]string{"list": "List schedules", "cancel": "Remove a schedule", "enable": "Enable a schedule", "disable": "Disable a schedule", "history": "Show scheduled runs"}[action], RunE: func(c *cobra.Command, args []string) error {
 			s, e := store()
 			if e != nil {
 				return e
 			}
-			if action == "ls" || action == "history" {
+			if action == "list" || action == "history" {
 				d, e := s.Load()
 				if e != nil {
 					return e
@@ -318,5 +309,3 @@ func transferCommand(store storeFunc, importing bool) *cobra.Command {
 		})
 	}}
 }
-
-var _ = strings.TrimSpace

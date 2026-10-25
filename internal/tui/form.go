@@ -1,35 +1,28 @@
 package tui
 
 import (
-	tea "charm.land/bubbletea/v2"
 	"fmt"
-	"github.com/procly/procly/internal/config"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/procly/procly/internal/config"
 )
 
 func (m *Model) beginForm(edit string) tea.Cmd {
 	m.mode = "form"
 	m.formKind = "command"
 	m.field = 0
-	dir := m.doc.Settings.DefaultDirectory
-	if dir == "" {
-		dir, _ = os.Getwd()
+	m.fields = config.CommandFields()
+	var err error
+	m.values, err = config.CommandValues(m.doc.Aliases[edit], m.doc.Settings)
+	if err != nil {
+		m.mode = ""
+		m.notice = err.Error()
+		return nil
 	}
-	m.fields = []string{"Name", "Command", "Mode: direct or shell", "Working directory", "Required environment names (comma separated)", "Restart: never, on-failure or always"}
-	m.values = []string{"", "", "direct", dir, "", "never"}
 	if edit != "" {
-		a := m.doc.Aliases[edit]
 		m.formKind = "edit"
-		m.values = []string{a.Name, config.CommandLine(a), "direct", a.Directory, strings.Join(a.RequiredEnv, ","), a.Restart}
-		if a.Shell {
-			m.values[2] = "shell"
-		}
-		if m.values[5] == "" {
-			m.values[5] = "never"
-		}
 	}
 	if m.section == 3 {
 		m.formKind = "group"
@@ -38,10 +31,13 @@ func (m *Model) beginForm(edit string) tea.Cmd {
 	}
 	if m.section == 5 {
 		m.formKind = "schedule"
-		m.fields = []string{"Schedule name", "Saved command name", "Timing: every 30m or at 2026-11-01T21:00:00+05:30"}
+		m.fields = []string{"Schedule name", "Saved command name", "Timing: every 30m or at YYYY-MM-DD HH:MM"}
 		m.values = []string{"", "", "every 30m"}
 	}
-	m.input.SetValue(m.values[0])
+	if m.formKind == "edit" {
+		m.field = 1
+	}
+	m.input.SetValue(m.values[m.field])
 	return m.input.Focus()
 }
 func (m Model) formUpdate(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -56,11 +52,17 @@ func (m Model) formUpdate(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.values[m.field] = m.input.Value()
 		}
 		m.field = max(0, m.field-1)
+		if m.formKind == "edit" {
+			m.field = max(1, m.field)
+		}
 		m.input.SetValue(m.values[m.field])
 		return m, m.input.Focus()
 	}
 	if key == "enter" || key == "tab" {
 		if m.field == len(m.fields) {
+			if key != "enter" {
+				return m, nil
+			}
 			m.mode = ""
 			m.busy = true
 			return m, m.do(func() error { return m.saveForm() }, "Saved "+m.values[0])
@@ -96,22 +98,21 @@ func (m Model) saveForm() error {
 			if _, ok := d.Groups[name]; ok {
 				return fmt.Errorf("group %s already exists", name)
 			}
-			d.Groups[name] = splitNames(m.values[1])
+			d.Groups[name] = config.SplitNames(m.values[1])
 		case "schedule":
 			if _, ok := d.Schedules[name]; ok {
 				return fmt.Errorf("schedule %s already exists", name)
 			}
-			s := config.Schedule{Name: name, Alias: strings.TrimSpace(m.values[1]), Enabled: true}
 			timing := strings.TrimSpace(m.values[2])
-			var e error
+			var at, every string
 			if strings.HasPrefix(timing, "every ") {
-				s.Every, e = time.ParseDuration(strings.TrimPrefix(timing, "every "))
-				s.Next = time.Now().Add(s.Every)
+				every = strings.TrimPrefix(timing, "every ")
 			} else if strings.HasPrefix(timing, "at ") {
-				s.At, e = time.Parse(time.RFC3339, strings.TrimPrefix(timing, "at "))
+				at = strings.TrimPrefix(timing, "at ")
 			} else {
-				return fmt.Errorf("use every 30m or at an RFC3339 date with timezone")
+				return fmt.Errorf("use every 30m or at YYYY-MM-DD HH:MM")
 			}
+			s, e := config.NewSchedule(name, strings.TrimSpace(m.values[1]), at, every, time.Now())
 			if e != nil {
 				return e
 			}
@@ -120,25 +121,13 @@ func (m Model) saveForm() error {
 			if _, ok := d.Aliases[name]; ok && m.formKind != "edit" {
 				return fmt.Errorf("command %s already exists", name)
 			}
-			a := config.Alias{Name: name, Restart: strings.TrimSpace(m.values[5]), RequiredEnv: splitNames(m.values[4])}
-			var e error
-			a.Directory, e = filepath.Abs(m.values[3])
-			if e != nil {
-				return e
-			}
-			switch strings.TrimSpace(m.values[2]) {
-			case "shell":
-				a.Shell = true
-				a.Executable = m.values[1]
-			case "direct":
-				a.Executable, a.Args, e = config.ParseCommand(m.values[1])
-				if e != nil {
-					return e
+			if m.formKind == "edit" {
+				if _, ok := d.Aliases[name]; !ok {
+					return fmt.Errorf("no saved command %q", name)
 				}
-			default:
-				return fmt.Errorf("mode must be direct or shell")
 			}
-			if e = a.ValidateLaunch(); e != nil {
+			a, e := config.CommandFromValues(m.values)
+			if e != nil {
 				return e
 			}
 			d.Aliases[name] = a
@@ -146,20 +135,15 @@ func (m Model) saveForm() error {
 		return nil
 	})
 }
-func splitNames(s string) []string {
-	var names []string
-	for _, name := range strings.Split(s, ",") {
-		if name = strings.TrimSpace(name); name != "" {
-			names = append(names, name)
-		}
-	}
-	return names
-}
 func (m Model) formView() string {
 	if m.field < len(m.fields) {
-		return m.style.header("Save "+m.formKind) + fmt.Sprintf("  %d/%d\n\n", m.field+1, len(m.fields)) + m.fields[m.field] + "\n\n" + m.input.View() + "\n\n" + m.style.hint("Enter next   Shift+Tab previous   Esc cancel\nChoose shell mode for npm, pipes and &&.\nEnvironment values are never stored.")
+		hint := "Enter next   Shift+Tab previous   Esc cancel"
+		if m.formKind == "command" || m.formKind == "edit" {
+			hint += "\n" + config.CommandHelp
+		}
+		return m.style.header("Save "+m.formTitle()) + fmt.Sprintf("  %d/%d\n\n", m.field+1, len(m.fields)) + m.fields[m.field] + "\n\n" + m.input.View() + "\n\n" + m.style.hint(hint)
 	}
-	return m.style.header("Review "+m.formKind) + "\n" + m.viewport.View() + "\n" + m.style.hint("Enter save   Shift+Tab edit   Esc cancel")
+	return m.style.header("Review "+m.formTitle()) + "\n" + m.viewport.View() + "\n" + m.style.hint("Enter save   Shift+Tab edit   Esc cancel")
 }
 func (m Model) reviewContent() string {
 	var b strings.Builder
@@ -167,4 +151,11 @@ func (m Model) reviewContent() string {
 		fmt.Fprintf(&b, "%s\n  %s\n", label, clean(m.values[i]))
 	}
 	return b.String()
+}
+
+func (m Model) formTitle() string {
+	if m.formKind == "edit" {
+		return "command"
+	}
+	return m.formKind
 }

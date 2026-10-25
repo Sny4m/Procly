@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/procly/procly/internal/updater"
 	"github.com/spf13/cobra"
@@ -10,7 +11,7 @@ import (
 
 func updateCommand(version string) *cobra.Command {
 	var check, yes, status bool
-	c := &cobra.Command{Use: "update", Short: "Check and install a signed official release", Args: cobra.NoArgs, RunE: func(c *cobra.Command, _ []string) error {
+	c := &cobra.Command{Use: "update", Short: "Check for updates and install a signed release", Args: cobra.NoArgs, RunE: func(c *cobra.Command, _ []string) error {
 		if status {
 			exe, e := os.Executable()
 			if e != nil {
@@ -35,6 +36,11 @@ func updateCommand(version string) *cobra.Command {
 			return e
 		}
 		release, e := client.Latest(c.Context())
+		if errors.Is(e, updater.ErrNoRelease) {
+			fmt.Fprintln(c.OutOrStdout(), "No stable release is available yet. Your installation has not changed.")
+			fmt.Fprintf(c.OutOrStdout(), "Releases: https://github.com/%s/%s/releases\n", client.Source.Owner, client.Source.Repository)
+			return nil
+		}
 		if e != nil {
 			return e
 		}
@@ -42,7 +48,7 @@ func updateCommand(version string) *cobra.Command {
 		if e != nil {
 			return e
 		}
-		fmt.Fprintf(c.OutOrStdout(), "\n  procly_ / updater\n\n  Current     %s\n  Available   %s\n\n", version, release.Tag)
+		fmt.Fprintf(c.OutOrStdout(), "\nUpdate Procly\n\n  Installed   %s\n  Available   %s\n\n", version, release.Tag)
 		if !newer {
 			fmt.Fprintln(c.OutOrStdout(), "You're up to date.")
 			return nil
@@ -84,5 +90,6 @@ func updateCommand(version string) *cobra.Command {
 	c.Flags().BoolVar(&check, "check", false, "Check without downloading")
 	c.Flags().BoolVarP(&yes, "yes", "y", false, "Approve installation")
 	c.Flags().BoolVar(&status, "status", false, "Read the validated installation result")
+	c.MarkFlagsMutuallyExclusive("check", "status")
 	return c
 }

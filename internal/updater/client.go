@@ -24,6 +24,9 @@ import (
 
 const maxArchive = 128 * 1024 * 1024
 
+var ErrNoRelease = errors.New("no stable release has been published yet")
+var errNotFound = errors.New("official repository or release was not found")
+
 type Asset struct {
 	Name string `json:"name"`
 	URL  string `json:"browser_download_url"`
@@ -72,7 +75,7 @@ func Newer(current, available string) (bool, error) {
 		return false, errors.New("release must have a stable semantic version")
 	}
 	current = Version(current)
-	if !semver.IsValid(current) || semver.Prerelease(current) != "" {
+	if !semver.IsValid(current) {
 		return true, nil
 	}
 	return semver.Compare(available, current) > 0, nil
@@ -92,7 +95,7 @@ func (c *Client) get(ctx context.Context, address string, limit int64) ([]byte, 
 	if response.StatusCode != 200 {
 		switch response.StatusCode {
 		case 404:
-			return nil, errors.New("official repository or published release was not found")
+			return nil, errNotFound
 		case 403, 429:
 			return nil, errors.New("GitHub refused the request or its API rate limit was reached")
 		}
@@ -110,6 +113,13 @@ func (c *Client) get(ctx context.Context, address string, limit int64) ([]byte, 
 func (c *Client) Latest(ctx context.Context) (Release, error) {
 	var r Release
 	b, e := c.get(ctx, fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", c.Source.Owner, c.Source.Repository), 2*1024*1024)
+	if errors.Is(e, errNotFound) {
+		// Distinguish an empty release list from an inaccessible repository.
+		if _, repoErr := c.get(ctx, fmt.Sprintf("https://api.github.com/repos/%s/%s", c.Source.Owner, c.Source.Repository), 2*1024*1024); repoErr != nil {
+			return r, repoErr
+		}
+		return r, ErrNoRelease
+	}
 	if e != nil {
 		return r, e
 	}

@@ -6,14 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/procly/procly/internal/config"
-	"github.com/procly/procly/internal/logs"
-	"github.com/procly/procly/internal/process"
-	"github.com/procly/procly/internal/session"
-	"github.com/procly/procly/internal/storage"
-	"github.com/procly/procly/internal/tui"
-	"github.com/spf13/cobra"
-	"golang.org/x/term"
 	"io"
 	"os"
 	"path/filepath"
@@ -23,6 +15,15 @@ import (
 	"sync"
 	"text/tabwriter"
 	"time"
+
+	"github.com/procly/procly/internal/config"
+	"github.com/procly/procly/internal/logs"
+	"github.com/procly/procly/internal/process"
+	"github.com/procly/procly/internal/session"
+	"github.com/procly/procly/internal/storage"
+	"github.com/procly/procly/internal/tui"
+	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 // ExitError preserves the managed command's exit status without printing a
@@ -44,7 +45,7 @@ func (e ExitError) Error() string { return fmt.Sprintf("command exited with code
 
 func New(version string) *cobra.Command {
 	var dataDir string
-	root := &cobra.Command{Use: "procly [COMMAND]", Short: "Run it. Track it. Control it.", Long: "procly_  Run it. Track it. Control it.\n\nOpen your process dashboard, or run a saved command by name.\nProcesses belong to the session that starts them.", SilenceUsage: true, SilenceErrors: true, Args: cobra.MaximumNArgs(1)}
+	root := &cobra.Command{Use: "procly [COMMAND]", Short: "Save commands and manage running processes", Long: "Procly: save commands and manage running processes.\n\nOpen your process dashboard, or run a saved command by name.\nProcesses belong to the session that starts them.", SilenceUsage: true, SilenceErrors: true, Args: cobra.MaximumNArgs(1)}
 	root.SetOut(os.Stdout)
 	root.SetErr(os.Stderr)
 	root.SetIn(os.Stdin)
@@ -52,7 +53,7 @@ func New(version string) *cobra.Command {
 	store := func() (*storage.Store, error) { return storage.Open(dataDir) }
 	root.AddCommand(&cobra.Command{Use: "version", Short: "Show the installed version", Args: cobra.NoArgs, RunE: func(c *cobra.Command, _ []string) error { fmt.Fprintln(c.OutOrStdout(), "procly", version); return nil }})
 	root.AddCommand(saveCommand(false, store), saveCommand(true, store))
-	root.AddCommand(&cobra.Command{Use: "ls", Short: "List saved commands", Args: cobra.NoArgs, RunE: func(c *cobra.Command, _ []string) error {
+	root.AddCommand(&cobra.Command{Use: "list", Short: "List saved commands", Args: cobra.NoArgs, RunE: func(c *cobra.Command, _ []string) error {
 		s, e := store()
 		if e != nil {
 			return e
@@ -73,7 +74,7 @@ func New(version string) *cobra.Command {
 		}
 		return w.Flush()
 	}})
-	root.AddCommand(&cobra.Command{Use: "info NAME", Short: "Inspect a saved definition (not live process state)", Args: cobra.ExactArgs(1), RunE: func(c *cobra.Command, args []string) error {
+	root.AddCommand(&cobra.Command{Use: "info NAME", Short: "Show saved command settings", Args: cobra.ExactArgs(1), RunE: func(c *cobra.Command, args []string) error {
 		s, e := store()
 		if e != nil {
 			return e
@@ -87,7 +88,7 @@ func New(version string) *cobra.Command {
 		return enc.Encode(a)
 	}})
 	var yes bool
-	remove := &cobra.Command{Use: "rm NAME", Short: "Remove a saved command", Args: cobra.ExactArgs(1), RunE: func(c *cobra.Command, args []string) error {
+	remove := &cobra.Command{Use: "remove NAME", Short: "Remove a saved command", Args: cobra.ExactArgs(1), RunE: func(c *cobra.Command, args []string) error {
 		s, e := store()
 		if e != nil {
 			return e
@@ -120,7 +121,7 @@ func New(version string) *cobra.Command {
 	remove.Flags().BoolVarP(&yes, "yes", "y", false, "Confirm removal")
 	root.AddCommand(remove)
 	var timeout time.Duration
-	run := &cobra.Command{Use: "run NAME", Short: "Run in this terminal; Ctrl+C stops the owned process tree", Args: cobra.ExactArgs(1), RunE: func(c *cobra.Command, args []string) (result error) {
+	run := &cobra.Command{Use: "run NAME", Short: "Run a saved command; Ctrl+C stops it", Args: cobra.ExactArgs(1), RunE: func(c *cobra.Command, args []string) (result error) {
 		s, e := store()
 		if e != nil {
 			return e
@@ -131,7 +132,7 @@ func New(version string) *cobra.Command {
 		}
 		a, ok := d.Aliases[args[0]]
 		if !ok {
-			return fmt.Errorf("no saved command %q; use procly ls", args[0])
+			return fmt.Errorf("no saved command %q; use procly list", args[0])
 		}
 		if c.Flags().Changed("stop-timeout") {
 			d.Settings.StopTimeout = timeout
@@ -217,12 +218,12 @@ func New(version string) *cobra.Command {
 	root.AddCommand(updateCommand(version))
 	for _, cmd := range root.Commands() {
 		switch cmd.Name() {
-		case "ls":
-			cmd.Aliases = []string{"list"}
+		case "list":
+			cmd.Aliases = []string{"ls"}
 		case "add":
 			cmd.Aliases = []string{"save"}
-		case "rm":
-			cmd.Aliases = []string{"remove"}
+		case "remove":
+			cmd.Aliases = []string{"rm"}
 		case "run":
 			cmd.Aliases = []string{"start"}
 		case "settings":
@@ -247,7 +248,7 @@ func lookup(s *storage.Store, name string) (config.Alias, error) {
 	}
 	a, ok := d.Aliases[name]
 	if !ok {
-		return a, fmt.Errorf("no saved command %q; use procly ls", name)
+		return a, fmt.Errorf("no saved command %q; use procly list", name)
 	}
 	return a, nil
 }
@@ -286,66 +287,68 @@ func saveCommand(edit bool, store storeFunc) *cobra.Command {
 	var shell bool
 	var restart string
 	verb := "add"
-	short := "Save a command, or open the guided creation wizard"
+	short := "Save a command or open guided setup"
 	if edit {
 		verb = "edit"
-		short = "Replace a saved command, with a review when using the wizard"
+		short = "Edit a saved command or open guided setup"
 	}
-	cmd := &cobra.Command{Use: verb + " [NAME] [-- EXECUTABLE ARG...]", Short: short, Example: "  procly add api -- node server.js\n  procly add api --shell -- \"npm run dev\"\n  procly add", RunE: func(c *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: verb + " [NAME] [COMMAND | -- EXECUTABLE ARG...]", Short: short, Example: "  procly add api \"node server.js\"\n  procly add web --shell \"npm run dev\"\n  procly add", RunE: func(c *cobra.Command, args []string) error {
 		s, e := store()
 		if e != nil {
 			return e
 		}
-		var a config.Alias
-		if len(args) == 0 {
-			if edit {
+		doc, e := s.Load()
+		if e != nil {
+			return e
+		}
+		a := config.Alias{}
+		if len(args) > 0 {
+			a.Name = args[0]
+		}
+		if edit {
+			if a.Name == "" {
 				return errors.New("provide the command name to edit")
 			}
-			a, e = wizard(c, config.Alias{})
+			a, e = lookup(s, a.Name)
 			if e != nil {
 				return e
 			}
+		}
+		if c.Flags().Changed("dir") {
+			a.Directory = dir
+		}
+		if c.Flags().Changed("require-env") {
+			a.RequiredEnv = env
+		}
+		if c.Flags().Changed("restart") {
+			a.Restart = restart
+		}
+		if c.Flags().Changed("shell") {
+			a.Shell = shell
+		}
+		values, e := config.CommandValues(a, doc.Settings)
+		if e != nil {
+			return e
+		}
+		if len(args) <= 1 {
+			a, e = wizard(c, values)
 		} else {
-			if edit {
-				a, e = lookup(s, args[0])
-				if e != nil {
-					return e
+			// Preserve argument boundaries after --; a single quoted command
+			// without the separator uses the same parser as guided setup.
+			if len(args) == 2 && c.ArgsLenAtDash() < 0 {
+				values[1] = args[1]
+			} else if a.Shell {
+				if len(args) != 2 {
+					return errors.New("shell mode needs one quoted command")
 				}
-			}
-			if len(args) == 1 {
-				if !edit {
-					a = config.Alias{Name: args[0]}
-				}
-				a, e = wizard(c, a)
-				if e != nil {
-					return e
-				}
+				values[1] = args[1]
 			} else {
-				if c.ArgsLenAtDash() != 1 {
-					return errors.New("separate the alias and executable with -- (example: procly add api -- node server.js)")
-				}
-				if dir == "" {
-					if edit {
-						dir = a.Directory
-					} else {
-						dir, e = os.Getwd()
-						if e != nil {
-							return e
-						}
-					}
-				}
-				dir, e = filepath.Abs(dir)
-				if e != nil {
-					return e
-				}
-				if edit && !c.Flags().Changed("require-env") {
-					env = a.RequiredEnv
-				}
-				if edit && !c.Flags().Changed("restart") {
-					restart = a.Restart
-				}
-				a = config.Alias{Name: args[0], Executable: args[1], Args: append([]string(nil), args[2:]...), Directory: dir, RequiredEnv: env, Shell: shell, Restart: restart}
+				values[1] = config.CommandLine(config.Alias{Executable: args[1], Args: args[2:]})
 			}
+			a, e = config.CommandFromValues(values)
+		}
+		if e != nil {
+			return e
 		}
 		if a.Name == "" {
 			fmt.Fprintln(c.OutOrStdout(), "Cancelled.")
@@ -366,125 +369,61 @@ func saveCommand(edit bool, store storeFunc) *cobra.Command {
 			return nil
 		})
 		if e == nil {
-			fmt.Fprintf(c.OutOrStdout(), "Saved %s. Run with: procly run %s\n", a.Name, a.Name)
+			fmt.Fprintf(c.OutOrStdout(), "Saved %s. Run with: procly %s\n", a.Name, a.Name)
 		}
 		return e
 	}}
-	cmd.Flags().StringVarP(&dir, "dir", "d", "", "Working directory (defaults to current directory)")
+	cmd.Flags().StringVarP(&dir, "dir", "d", "", "Working directory (uses default-dir or the current directory)")
 	cmd.Flags().StringSliceVar(&env, "require-env", nil, "Required inherited environment variable names; values are never saved")
-	cmd.Flags().BoolVar(&shell, "shell", false, "Explicit cmd.exe shell mode; provide one quoted script after --")
+	cmd.Flags().BoolVar(&shell, "shell", false, "Use cmd.exe for a quoted command (npm, pipes or &&)")
 	cmd.Flags().StringVar(&restart, "restart", "never", "Restart policy: never, on-failure or always (up to 5 retries)")
 	return cmd
 }
 
-func wizard(c *cobra.Command, a config.Alias) (config.Alias, error) {
+func wizard(c *cobra.Command, values []string) (config.Alias, error) {
 	reader := bufio.NewReader(c.InOrStdin())
 	out := c.OutOrStdout()
-	fmt.Fprint(out, "\n  procly_ / save command\n\n  Arguments are entered separately; no implicit shell.\n  Environment values are inherited, never saved.\n\n")
+	fmt.Fprintln(out, "\nSave command\n\n"+config.CommandHelp+"\nPress Enter to keep a value; enter - to clear it.")
 	ask := func(label, fallback string) (string, error) {
-		fmt.Fprint(out, "  "+label)
+		fmt.Fprint(out, label)
 		if fallback != "" {
 			fmt.Fprint(out, " ["+safeText(fallback)+"]")
 		}
 		fmt.Fprint(out, ": ")
-		v, e := reader.ReadString('\n')
-		if e != nil {
-			return "", fmt.Errorf("input interrupted; nothing saved: %w", e)
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return "", fmt.Errorf("input interrupted; nothing saved: %w", err)
 		}
-		v = strings.TrimSuffix(strings.TrimSuffix(v, "\n"), "\r")
-		if v == "" {
+		line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+		if line == "-" {
+			return "", nil
+		}
+		if line == "" {
 			return fallback, nil
 		}
-		return v, nil
+		return line, nil
 	}
-	var e error
-	if a.Name == "" {
-		a.Name, e = ask("Name", "")
-		if e != nil {
-			return a, e
+	for i, label := range config.CommandFields() {
+		if i == 0 && values[i] != "" {
+			continue
 		}
-	}
-	mode := "no"
-	if a.Shell {
-		mode = "yes"
-	}
-	mode, e = ask("Use shell syntax? yes/no", mode)
-	if e != nil {
-		return a, e
-	}
-	if mode != "yes" && mode != "no" {
-		return a, errors.New("shell mode must be yes or no")
-	}
-	a.Shell = mode == "yes"
-	label := "Executable"
-	if a.Shell {
-		label = "Shell script"
-	}
-	a.Executable, e = ask(label, a.Executable)
-	if e != nil {
-		return a, e
-	}
-	if !a.Shell {
-		replace := true
-		if len(a.Args) > 0 {
-			fmt.Fprintln(out, "  Current arguments:", display(a))
-			answer, err := ask("Replace arguments? yes/no", "no")
-			if err != nil {
-				return a, err
-			}
-			if answer != "yes" && answer != "no" {
-				return a, errors.New("answer yes or no")
-			}
-			replace = answer == "yes"
+		value, err := ask(label, values[i])
+		if err != nil {
+			return config.Alias{}, err
 		}
-		if replace {
-			a.Args = nil
-			fmt.Fprintln(out, "  Enter one argument per line, without wrapping quotes. Blank ends arguments.")
-			for i := 1; ; i++ {
-				arg, e := ask(fmt.Sprintf("Argument %d", i), "")
-				if e != nil {
-					return a, e
-				}
-				if arg == "" {
-					break
-				}
-				a.Args = append(a.Args, arg)
-			}
-		}
-	} else {
-		a.Args = nil
+		values[i] = value
 	}
-	if a.Directory == "" {
-		a.Directory, e = os.Getwd()
-		if e != nil {
-			return a, e
-		}
+	a, err := config.CommandFromValues(values)
+	if err != nil {
+		return a, err
 	}
-	a.Directory, e = ask("Working directory", a.Directory)
-	if e != nil {
-		return a, e
+	fmt.Fprintln(out, "\nReview command")
+	for i, label := range config.CommandFields() {
+		fmt.Fprintf(out, "  %s: %s\n", label, safeText(values[i]))
 	}
-	a.Directory, e = filepath.Abs(a.Directory)
-	if e != nil {
-		return a, e
-	}
-	keys, e := ask("Required environment names (comma separated)", strings.Join(a.RequiredEnv, ","))
-	if e != nil {
-		return a, e
-	}
-	a.RequiredEnv = nil
-	if keys != "" {
-		for _, key := range strings.Split(keys, ",") {
-			a.RequiredEnv = append(a.RequiredEnv, strings.TrimSpace(key))
-		}
-	}
-	if e = a.ValidateLaunch(); e != nil {
-		return a, e
-	}
-	fmt.Fprintf(out, "\n  Review\n  Name        %s\n  Command     %s\n  Directory   %s\n  Environment %s\n  Restart     Manual (Phase 1)\n\n", a.Name, display(a), safeText(a.Directory), strings.Join(a.RequiredEnv, ", "))
-	answer, e := ask("Save? y/N", "N")
-	if e != nil {
-		return a, e
+	answer, err := ask("Save? y/N", "N")
+	if err != nil {
+		return a, err
 	}
 	if !strings.EqualFold(answer, "y") && !strings.EqualFold(answer, "yes") {
 		return config.Alias{}, nil
@@ -526,7 +465,7 @@ func records(s *storage.Store) ([]process.Record, error) {
 }
 func historyCommand(store storeFunc) *cobra.Command {
 	var asJSON bool
-	cmd := &cobra.Command{Use: "history [NAME]", Short: "Show completed sessions; historical PIDs are never live state", Args: cobra.MaximumNArgs(1), RunE: func(c *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "history [NAME]", Short: "Show previous runs", Args: cobra.MaximumNArgs(1), RunE: func(c *cobra.Command, args []string) error {
 		s, e := store()
 		if e != nil {
 			return e
@@ -594,7 +533,7 @@ func logsCommand(store storeFunc) *cobra.Command {
 	return cmd
 }
 func settingsCommand(store storeFunc) *cobra.Command {
-	return &cobra.Command{Use: "settings [KEY VALUE]", Short: "Inspect or set stop-timeout, log-bytes, log-backups, retain-sessions", Args: func(_ *cobra.Command, args []string) error {
+	return &cobra.Command{Use: "settings [KEY VALUE]", Short: "View or change settings", Args: func(_ *cobra.Command, args []string) error {
 		if len(args) != 0 && len(args) != 2 {
 			return errors.New("use procly settings or procly settings KEY VALUE")
 		}

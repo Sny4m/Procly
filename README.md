@@ -1,225 +1,119 @@
-
-```text
-                         _
- _ __  _ __ ___   ___  | |_   _
-| '_ \| '__/ _ \ / __| | | | | |
-| |_) | | | (_) | (__  | | |_| |
-| .__/|_|  \___/ \___| |_|\__, |
-|_|                       |___/
-```
-
 # Procly
 
-**Run it. Track it. Control it.**
+Save commands and manage running processes from a terminal dashboard or the command line. Procly currently supports Windows.
 
-Procly is a lightweight terminal process manager built with Go. It lets you save commands, run multiple processes, monitor their activity, and manage everything from one clean terminal dashboard.
+## Get started
 
-No more juggling terminal windows just to keep your development environment running.
-
-Built for **Windows**, with Linux and macOS support planned.
-
-## ✨ Features
-
-- 🖥️ **Interactive Dashboard** — Manage processes from a clean, keyboard-driven terminal interface.
-- ⚡ **Command Aliases** — Save frequently used commands and run them with a short name.
-- 🔄 **Process Management** — Start, stop, restart, and monitor processes without opening additional terminal windows.
-- 📋 **Live Logs** — View output in real time, search logs, and inspect previous runs.
-- 📁 **Workspaces** — Group related commands and launch them together.
-- ⏰ **Scheduling** — Schedule commands to run at specific times or intervals while Procly is open.
-- 🔁 **Auto-Restart** — Automatically restart failed processes using configurable restart policies.
-- 📊 **Process Monitoring** — Check process status, uptime, and memory usage.
-- 📦 **Self-Updates** — Check for new versions and update directly from GitHub Releases.
-
-## 💡 Why I Built Procly
-
-While working on different projects, I often found myself opening several terminal windows just to keep things running.
-
-One for a development server, another for a background worker, and sometimes a few more for other tasks.
-
-It worked, but keeping track of everything became annoying. I'd forget which terminal was running what, waste time switching between windows, or have to restart commands I'd already typed countless times.
-
-I originally built a small Python utility called **Termy** to make this easier.
-
-Procly is a complete rebuild of that idea in Go, with a bigger focus on performance, reliability, and user experience.
-
-I wanted something simple: one place to save my commands, launch them, see what's running, and shut everything down when I'm done.
-
-That's what Procly is built for.
-
-## 🚀 Getting Started
-
-### Requirements
-
-- Windows 11 (recommended)
-- Go 1.27.1 or newer (for building from source)
-
-### Build from Source
-
-Clone the repository and run:
+When a Windows build is available on [Releases](https://github.com/Sny4m/Procly/releases), extract it and put `procly.exe` in a folder on your `PATH`. Until the first release is published, build from source. Install the Go version specified in [go.mod](go.mod), then run:
 
 ```powershell
-go mod download
 go build -o procly.exe ./cmd/procly
 .\procly.exe
 ```
 
-You can move the compiled executable to a directory in your `PATH` to use `procly` from anywhere.
+Run `procly` to open the dashboard. Press `a` to add a command, or run `procly add` for guided setup in your terminal. Both use the same fields and defaults:
 
-### Your First Command
+- **Name:** a short name such as `api`.
+- **Command:** the full command, including arguments, such as `node server.js`.
+- **Mode:** `direct` for executables; `shell` for npm scripts, pipes, or `&&`. Shell mode uses Windows cmd.exe.
+- **Working directory:** the folder where the command runs. Uses `default-dir` when configured, otherwise your current folder.
+- **Required environment variables:** comma-separated names. Values come from the environment and are never saved.
+- **Restart:** `never`, `on-failure`, or `always`. Automatic restarts stop after five retries.
 
-Save a command:
+Review before saving. In terminal setup, Enter keeps the displayed value and `-` clears it. In the dashboard, Shift+Tab goes back and Esc cancels.
 
-```bash
-procly add api -- node server.js
-```
+## Save and run commands
 
-Run it:
-
-```bash
+```powershell
+procly add api "node server.js"
+procly add web --shell "npm run dev"
 procly api
 ```
 
-For npm scripts on Windows, use shell mode:
+For precise argument boundaries, use `--`. Put Procly options before it:
 
-```bash
-procly add web --shell -- "npm run dev"
-procly web
+```powershell
+procly add api --dir C:\projects\api -- node server.js --port 3000
 ```
 
-Or simply launch the dashboard:
-
-```bash
-procly
-```
-
-From there, you can manage multiple commands without opening separate terminal windows.
-
-## 🛠️ Commands
-
-| Command | Description |
-|---------|-------------|
-| `procly` | Open the interactive dashboard |
-| `procly add` | Add a new command |
+| Command | Action |
+| --- | --- |
+| `procly` | Open the dashboard |
+| `procly add [NAME]` | Open guided setup |
 | `procly list` | List saved commands |
-| `procly NAME` | Run a saved command |
-| `procly edit NAME` | Edit a saved command |
-| `procly remove NAME` | Remove a command |
-| `procly ps` | View active processes |
-| `procly stop NAME` | Stop a process |
-| `procly restart NAME` | Restart a process |
-| `procly logs NAME -f` | Follow live logs |
-| `procly history` | View previous runs |
-| `procly update` | Check for and install updates |
+| `procly NAME` or `procly run NAME` | Run a command in this terminal |
+| `procly edit NAME` | Edit a command with guided setup |
+| `procly remove NAME` | Remove a saved command |
+| `procly info NAME` | Show command settings |
+| `procly ps` | Show processes in the active session |
+| `procly stop NAME` | Stop a running command |
+| `procly restart NAME` | Restart a command |
+| `procly logs NAME -f` | Follow live output |
+| `procly logs NAME` | Read saved output |
+| `procly history [NAME]` | Show previous runs |
+| `procly settings [KEY VALUE]` | View or change settings |
+| `procly update` | Install an available signed update |
 
-Use `procly help` to explore all available commands and options.
+Shortcuts `ls`, `rm`, `save`, `start`, and `config` remain available. Use `procly COMMAND --help` for options. If a saved name matches a built-in command, use `procly run NAME`.
 
-### 📁 Workspaces
+A dashboard or foreground run owns its processes. Keep that session open; use another terminal for `ps`, `stop`, `restart`, and live logs. Only one session can run per data directory. Ctrl+C stops a foreground run; exiting the dashboard stops its processes.
 
-Working on a project with multiple services?
+## Groups
 
-Group them together:
+Create a group and launch its commands together:
 
-```bash
-procly group create dev
-procly group add dev api web
+```powershell
+procly group create dev api web
 procly group run dev
-```
-
-Stop the entire workspace:
-
-```bash
 procly group stop dev
 ```
 
-### ⏰ Scheduling
+Use `procly group add dev NAME` to add more commands, `procly group list` to view groups, and `procly group remove dev` to remove one. Running a group opens the dashboard if no session is active.
 
-Schedule a command for a specific time:
+## Schedules
 
-```bash
-procly schedule add backup --at "2026-11-01 21:00" --run backup
+Schedules run only while the dashboard is open. Missed runs are not replayed when you reopen it.
+
+```powershell
+procly schedule add backup --run backup --at "2026-11-01 21:00"
+procly schedule add worker --run worker --every 30m
+procly schedule list
+procly schedule disable worker
+procly schedule cancel worker
 ```
 
-Or run a command at regular intervals:
+Dates use local time unless you supply an RFC3339 timezone. Dashboard timing accepts `every 30m` or `at YYYY-MM-DD HH:MM`, with the same formats and validation as the CLI.
 
-```bash
-procly schedule add worker --every 30m --run worker
-```
-
-View schedules:
-
-```bash
-procly schedule ls
-```
-
-**Note:** Schedules only execute while the Procly dashboard is running.
-
-## ⌨️ Keyboard Shortcuts
-
-Procly's dashboard is designed to be navigated entirely from your keyboard.
+## Dashboard keys
 
 | Key | Action |
-|-----|--------|
-| `↑` / `↓` | Navigate |
-| `Enter` | View details |
-| `a` | Add a command |
-| `e` | Edit a command |
-| `r` | Run or restart |
-| `s` | Stop a process |
-| `l` | View logs |
-| `/` | Search |
-| `Tab` | Switch sections |
-| `?` | Show help |
-| `Esc` | Go back |
-| `q` | Quit |
+| --- | --- |
+| Up / Down | Select a row |
+| Enter | View details |
+| a / e | Add / edit a command |
+| r / s | Run or restart / stop |
+| l | View logs |
+| / | Search |
+| Tab | Switch sections |
+| ? | Show help |
+| Esc | Go back |
+| q | Quit |
 
-When you exit Procly, it asks for confirmation before stopping active processes.
+## Development and releases
 
-## 🔄 Updating Procly
-
-Procly includes a built-in updater.
-
-Check for updates:
-
-```bash
-procly update --check
+```powershell
+gofmt -w cmd internal
+go vet ./...
+go test -race -count=1 -timeout=3m ./...
+go build ./cmd/procly
 ```
 
-Download and install an available release:
+CI checks formatting, runs vet and tests, and builds Windows AMD64 and ARM64 binaries. Pushing a `v*` tag runs the same checks, verifies the configured release source and signing key, then creates a draft release with signed checksums. Configure `PROCLY_SIGNING_KEY` in the release environment. Review the draft before publishing.
 
-```bash
-procly update
-```
+`procly update --check` checks for updates without installing. Updates require the official source in `internal/release/source.json` and a release signed with its configured key.
 
-Updates are fetched from the official GitHub repository and verified before installation.
+If no stable release has been published, the updater reports that and leaves your installation unchanged. After an update, run `procly update --status` to confirm installation. Windows completes the replacement after the update command exits and restores the previous executable if validation fails.
 
-**Note:** Online updates require the official repository source to be configured and signed releases to be published.
+## License
 
-## 🧰 Built With
-
-- **Go** — Core application and process management
-- **Cobra** — CLI commands and argument handling
-- **Bubble Tea** — Interactive terminal interface
-- **Lip Gloss** — Terminal styling and layout
-- **Windows APIs** — Process lifecycle management
-
-## 🗺️ Roadmap
-
-Procly is still evolving. Some things I'd like to work on next:
-
-- [ ] Linux and macOS support
-- [ ] Improved process resource monitoring
-- [ ] More dashboard customization
-- [ ] Better workspace management
-- [ ] Shell autocomplete and command suggestions
-- [ ] Additional scheduling options
-- [ ] Easier installation and package manager support
-
-## 🤝 Contributing
-
-Contributions, bug reports, and feature suggestions are welcome.
-
-If you find something that could be better, feel free to open an issue or submit a pull request.
-
-## 📄 License
-
-Procly is open source under the [MIT License](LICENSE).
+[MIT](LICENSE)
